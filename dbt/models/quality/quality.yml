@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: dq_rent_basis_by_network
+    description: Median ratio of declared to assessed rent by broker network; a network well below 1 declares rent on a different basis.
+    columns:
+      - name: network
+        tests: [unique]
+  - name: dq_issues
+    description: >
+      The data-quality register: every issue detected in the source extracts, one row per record, with what the
+      pipeline does about it. Compared with the planted answer key by `analysis/scorecard.py`.
+    meta: {owner: data_team}
+    columns:
+      - name: issue_type
+        tests:
+          - not_null
+          - accepted_values:
+              values: [duplicate_application, status_out_of_order, completion_date_mismatch, rent_basis_net, stale_rate_card,
+                       avm_ineligible, partner_over_capacity, pii_in_notes, orphan_broker, nonpositive_loan, rental_cover_below_policy]
+      - name: record_id
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [issue_type, record_id]
+  - name: dq_summary
+    description: Issues by type.

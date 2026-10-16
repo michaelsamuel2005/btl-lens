@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: metricflow_time_spine
+    description: Daily time spine for the dbt semantic layer.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+
+semantic_models:
+  - name: completions
+    description: Completed loans.
+    model: ref('fct_completions')
+    defaults:
+      agg_time_dimension: completion_date
+    entities:
+      - name: completion
+        type: primary
+        expr: completion_id
+      - name: funding_partner
+        type: foreign
+        expr: partner_id
+      - name: broker
+        type: foreign
+        expr: broker_id
+    dimensions:
+      - name: completion_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: product_range
+        type: categorical
+      - name: purpose
+        type: categorical
+      - name: property_type
+        type: categorical
+      - name: region
+        type: categorical
+    measures:
+      - name: gross_lending
+        agg: sum
+        expr: loan_amount
+      - name: completions_count
+        agg: count
+        expr: completion_id
+
+  - name: applications
+    description: Genuine applications and their funnel outcomes.
+    model: ref('fct_applications')
+    defaults:
+      agg_time_dimension: submitted_date
+    entities:
+      - name: application
+        type: primary
+        expr: application_id
+      - name: broker
+        type: foreign
+        expr: broker_id
+    dimensions:
+      - name: submitted_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: purpose
+        type: categorical
+      - name: property_type
+        type: categorical
+      - name: feature_eligible
+        type: categorical
+    measures:
+      - name: applications_count
+        agg: count
+        expr: application_id
+      - name: offers_count
+        agg: sum
+        expr: case when reached_offer then 1 else 0 end
+      - name: completed_count
+        agg: sum
+        expr: case when is_completed then 1 else 0 end
+      - name: days_to_offer_mean
+        agg: average
+        expr: days_to_offer
+
+metrics:
+  - name: gross_lending
+    label: Gross lending
+    description: Sum of completed loans, by the month funds were released.
+    type: simple
+    type_params:
+      measure: gross_lending
+  - name: completions
+    label: Completions
+    type: simple
+    type_params:
+      measure: completions_count
+  - name: applications
+    label: Applications
+    type: simple
+    type_params:
+      measure: applications_count
+  - name: offer_rate
+    label: Offer rate
+    description: Applications that received an offer, as a share of applications submitted in the period.
+    type: ratio
+    type_params:
+      numerator: offers
+      denominator: applications
+  - name: offers
+    label: Offers issued
+    type: simple
+    type_params:
+      measure: offers_count
+  - name: completion_rate
+    label: Completion rate
+    type: ratio
+    type_params:
+      numerator: completed_applications
+      denominator: applications
+  - name: completed_applications
+    label: Completed applications
+    type: simple
+    type_params:
+      measure: completed_count
+  - name: mean_days_to_offer
+    label: Mean days to offer
+    type: simple
+    type_params:
+      measure: days_to_offer_mean

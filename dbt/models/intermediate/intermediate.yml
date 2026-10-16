@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: int_application_funnel
+    description: One row per application with the timestamp of each stage reached (from the status history) and the days between stages.
+    columns:
+      - name: application_id
+        tests: [unique, not_null]
+      - name: outcome
+        tests: [not_null]
+  - name: int_rate_card_at_submission
+    description: The rate card live for the application's product on its submission date (offers are expected to use it).
+    columns:
+      - name: application_id
+        tests: [unique, not_null]
+      - name: rate_card_id_expected
+        tests: [not_null]
+  - name: int_rental_cover
+    description: Rental cover recomputed from policy for every offer, independently of the figure the offer carries.
+    columns:
+      - name: offer_id
+        tests: [unique, not_null]
+      - name: rental_cover_policy_pct
+        tests: [not_null]
+  - name: int_feature_eligibility
+    description: Feature eligibility, launch period and AVM use per application, derived from the application itself.
+    columns:
+      - name: application_id
+        tests: [unique, not_null]
+
+unit_tests:
+  - name: funnel_days_from_status_history
+    description: Days to offer and valuation days are computed from the status history, and a missing offer leaves them null.
+    model: int_application_funnel
+    given:
+      - input: ref('stg_application_status_history')
+        rows:
+          - {application_id: A1, status: submitted,            status_at: "2026-01-01 09:00:00"}
+          - {application_id: A1, status: valuation_instructed, status_at: "2026-01-03 09:00:00"}
+          - {application_id: A1, status: valuation_received,   status_at: "2026-01-13 09:00:00"}
+          - {application_id: A1, status: offered,              status_at: "2026-01-21 09:00:00"}
+          - {application_id: A2, status: submitted,            status_at: "2026-02-01 09:00:00"}
+          - {application_id: A2, status: declined,             status_at: "2026-02-10 09:00:00"}
+          - {application_id: A3, status: submitted,            status_at: "2026-03-01 09:00:00"}
+          - {application_id: A3, status: valuation_instructed, status_at: "2026-03-05 09:00:00"}
+          - {application_id: A3, status: valuation_received,   status_at: "2026-03-02 09:00:00"}
+    expect:
+      rows:
+        - {application_id: A1, days_to_offer: 20.0, valuation_days: 10.0, outcome: offered,  status_order_valid: true}
+        - {application_id: A2, days_to_offer: null, valuation_days: null, outcome: declined, status_order_valid: true}
+        - {application_id: A3, days_to_offer: null, valuation_days: -3.0, outcome: "valuation received", status_order_valid: false}
+
+  - name: rental_cover_policy_calculation
+    description: A two-year fix is stressed at max(rate + 2, 5.5); a five-year fix at its pay rate; the minimum depends on the tax band.
+    model: int_rental_cover
+    given:
+      - input: ref('stg_offers')
+        rows:
+          - {offer_id: O1, application_id: A1, loan_amount: 200000, initial_rate_pct: 4.0, stress_rate_pct: 6.0, product_id: P2}
+          - {offer_id: O2, application_id: A2, loan_amount: 200000, initial_rate_pct: 5.0, stress_rate_pct: 5.0, product_id: P5}
+      - input: ref('stg_applications')
+        rows:
+          - {application_id: A1, tax_band: higher, declared_monthly_rent: 1000, purpose: purchase, property_type: standard, portfolio_size: 1, property_value: 300000}
+          - {application_id: A2, tax_band: limited_company, declared_monthly_rent: 1100, purpose: purchase, property_type: standard, portfolio_size: 5, property_value: 300000}
+      - input: ref('stg_valuations')
+        rows:
+          - {application_id: A1, monthly_rent_assessed: 1200, market_value: 300000, valuation_type: physical}
+          - {application_id: A2, monthly_rent_assessed: 1100, market_value: 300000, valuation_type: physical}
+      - input: ref('stg_products')
+        rows:
+          - {product_id: P2, term_type: fixed, fixed_years: 2}
+          - {product_id: P5, term_type: fixed, fixed_years: 5}
+      - input: ref('policy_rental_cover')
+        rows:
+          - {tax_band: higher, min_rental_cover_pct: 145}
+          - {tax_band: limited_company, min_rental_cover_pct: 125}
+    expect:
+      rows:
+        # O1: rent 1200 x 12 = 14400 over 200000 x 6% = 12000 -> 120.0%, below 145 for a higher-rate taxpayer
+        - {offer_id: O1, stress_rate_policy_pct: 6.00, rental_cover_policy_pct: 120.0, rental_cover_passes: false}
+        # O2: rent 1100 x 12 = 13200 over 200000 x 5% = 10000 -> 132.0%, above 125 for a company
+        - {offer_id: O2, stress_rate_policy_pct: 5.00, rental_cover_policy_pct: 132.0, rental_cover_passes: true}

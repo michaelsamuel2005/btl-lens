@@ -1,0 +1,4 @@
+# dbt_utils from GitHub (the dbt hub needs network access that CI runners have; `dbt deps` installs it).
+packages:
+  - git: "https://github.com/dbt-labs/dbt-utils.git"
+    revision: 1.3.0

@@ -1,0 +1,187 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Source-system extracts of the simulated marketplace, as written by `python -m simulate` to `data/raw/`.
+      On DuckDB they are read in place from the CSV and JSON-lines files (`external_location`); on Snowflake and
+      PostgreSQL they are tables of the same names loaded by `scripts/load_warehouse.py`.
+    schema: raw
+    meta:
+      # BTL_LENS_RAW_DIR points at data/raw; the default works when dbt is run from the repository root.
+      external_location: "read_csv_auto('{{ env_var('BTL_LENS_RAW_DIR', 'data/raw') }}/{name}.csv', header=true, sample_size=-1)"
+    loaded_at_field: cast(submitted_at as timestamp)
+    tables:
+      - name: brokers
+        description: Mortgage brokers and the networks they belong to, from the broker portal.
+        loaded_at_field: cast(onboarded_date as timestamp)
+        columns:
+          - name: broker_id
+            tests: [unique, not_null]
+          - name: network
+            tests: [not_null]
+
+      - name: products
+        description: The product catalogue (ranges, terms, maximum LTV, fees, purposes).
+        loaded_at_field: null
+        columns:
+          - name: product_id
+            tests: [unique, not_null]
+
+      - name: rate_cards
+        description: Versioned pricing for each product; a new row each time a rate changes.
+        loaded_at_field: cast(valid_from as timestamp)
+        columns:
+          - name: rate_card_id
+            tests: [unique, not_null]
+          - name: product_id
+            tests:
+              - relationships:
+                  to: source('raw', 'products')
+                  field: product_id
+
+      - name: funding_partners
+        description: Funding partners (banks and institutions) and their lines.
+        loaded_at_field: null
+        columns:
+          - name: partner_id
+            tests: [unique, not_null]
+
+      - name: dips
+        description: Decisions in principle requested through the broker portal.
+        loaded_at_field: cast(created_at as timestamp)
+        columns:
+          - name: dip_id
+            tests: [unique, not_null]
+          - name: dip_result
+            tests:
+              - accepted_values:
+                  values: [accept, refer, decline]
+
+      - name: applications
+        description: >
+          Full mortgage applications. Known weaknesses of this extract, all caught downstream: broker resubmissions
+          create duplicate cases; `completed_at` sometimes holds the offer-accepted date rather than funds released;
+          some brokers declare rent net of management fees; free text can contain personal data.
+        columns:
+          - name: application_id
+            tests: [unique, not_null]
+          - name: broker_id
+            tests:
+              - not_null
+              - relationships:
+                  to: source('raw', 'brokers')
+                  field: broker_id
+                  config: {severity: warn}
+          - name: loan_amount
+            tests:
+              - dbt_utils.accepted_range:
+                  min_value: 1
+                  inclusive: true
+                  config: {severity: warn}
+          - name: status_current
+            tests:
+              - accepted_values:
+                  values: [submitted, valuation_instructed, valuation_received, underwriting, offered, offer_accepted, completed, declined, withdrawn]
+          - name: product_id
+            tests:
+              - relationships:
+                  to: source('raw', 'products')
+                  field: product_id
+
+      - name: application_status_history
+        description: One row per status an application has reached, with its timestamp.
+        loaded_at_field: cast(status_at as timestamp)
+        columns:
+          - name: application_id
+            tests:
+              - relationships:
+                  to: source('raw', 'applications')
+                  field: application_id
+          - name: status
+            tests:
+              - accepted_values:
+                  values: [submitted, valuation_instructed, valuation_received, underwriting_started, offered, offer_accepted, completed, declined, withdrawn]
+
+      - name: valuations
+        description: Physical and automated (AVM) valuations.
+        loaded_at_field: cast(instructed_at as timestamp)
+        columns:
+          - name: valuation_id
+            tests: [unique, not_null]
+          - name: valuation_type
+            tests:
+              - accepted_values:
+                  values: [physical, avm]
+
+      - name: offers
+        description: Mortgage offers, with the pricing applied.
+        loaded_at_field: cast(offered_at as timestamp)
+        columns:
+          - name: offer_id
+            tests: [unique, not_null]
+          - name: application_id
+            tests:
+              - unique
+              - relationships:
+                  to: source('raw', 'applications')
+                  field: application_id
+          - name: rate_card_id
+            tests:
+              - relationships:
+                  to: source('raw', 'rate_cards')
+                  field: rate_card_id
+
+      - name: completions
+        description: Completed loans (funds released).
+        loaded_at_field: cast(funds_released_at as timestamp)
+        columns:
+          - name: completion_id
+            tests: [unique, not_null]
+          - name: application_id
+            tests: [unique, not_null]
+
+      - name: funding_allocations
+        description: Which funding partner each completed loan was allocated to.
+        loaded_at_field: cast(allocation_month as timestamp)
+        columns:
+          - name: allocation_id
+            tests: [unique, not_null]
+          - name: completion_id
+            tests:
+              - unique
+              - relationships:
+                  to: source('raw', 'completions')
+                  field: completion_id
+          - name: partner_id
+            tests:
+              - relationships:
+                  to: source('raw', 'funding_partners')
+                  field: partner_id
+
+      - name: loan_book_monthly
+        description: Month-end snapshot of every loan on the book.
+        loaded_at_field: cast(snapshot_month as timestamp)
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              combination_of_columns: [snapshot_month, loan_id]
+
+      - name: product_transfers
+        description: What happened at the end of each fixed-rate period.
+        loaded_at_field: cast(decided_at as timestamp)
+        columns:
+          - name: product_transfer_id
+            tests: [unique, not_null]
+          - name: outcome
+            tests:
+              - accepted_values:
+                  values: [product_transfer, redeemed, reverted]
+
+      - name: portal_events
+        description: Broker-portal events as JSON lines, with a nested payload (feature flags, device, session).
+        loaded_at_field: cast(event_at as timestamp)
+        meta:
+          external_location: "read_json('{{ env_var('BTL_LENS_RAW_DIR', 'data/raw') }}/portal_events.jsonl', format='newline_delimited', columns={% raw %}{{event_id: 'VARCHAR', event_type: 'VARCHAR', event_at: 'VARCHAR', broker_id: 'VARCHAR', dip_id: 'VARCHAR', application_id: 'VARCHAR', payload: 'JSON'}}{% endraw %})"
+        columns:
+          - name: event_id
+            tests: [unique, not_null]

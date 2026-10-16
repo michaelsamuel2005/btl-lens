@@ -1,0 +1,4 @@
+tax_band,min_rental_cover_pct,description
+basic,125,Basic-rate taxpayer borrowing personally
+higher,145,Higher- or additional-rate taxpayer borrowing personally
+limited_company,125,Limited-company borrower

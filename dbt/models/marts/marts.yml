@@ -1,0 +1,335 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: One row per calendar day, 2023 to 2026, with the month and quarter attributes reports group by.
+    columns:
+      - name: date_day
+        description: The calendar date (primary key).
+        tests: [unique, not_null]
+
+  - name: dim_broker
+    description: >
+      One row per broker firm, as currently recorded. For the network a broker was in at the time of a case, use
+      `snap_brokers`. Owner: Distribution.
+    meta: {owner: distribution}
+    columns:
+      - name: broker_id
+        description: Broker identifier from the portal (primary key).
+        tests: [unique, not_null]
+      - name: firm_name
+        description: Trading name of the broker firm.
+      - name: network
+        description: The mortgage network the firm belongs to, or "Directly authorised".
+      - name: authorisation
+        description: Network member or directly authorised.
+      - name: region
+        description: Region of the broker's office.
+      - name: onboarded_date
+        description: Date the broker was set up on the portal.
+
+  - name: dim_product
+    description: "One row per product in the catalogue. Owner: Pricing."
+    meta: {owner: pricing}
+    columns:
+      - name: product_id
+        tests: [unique, not_null]
+      - name: product_range
+        description: Core (standard property) or Specialist (small HMO, small multi-unit block).
+        tests:
+          - accepted_values: {values: [Core, Specialist]}
+      - name: term_type
+        description: fixed or tracker.
+      - name: max_ltv_pct
+        description: Maximum loan to value the product allows.
+      - name: fee_pct
+        description: Product fee as a percentage of the loan.
+      - name: purpose_group
+        description: Purchase and remortgage, or product transfer.
+
+  - name: dim_rate_card
+    description: >
+      Every version of every product's pricing with the dates it was valid; `is_current` marks the live version.
+      Owner: Pricing.
+    meta: {owner: pricing}
+    columns:
+      - name: rate_card_id
+        tests: [unique, not_null]
+      - name: product_id
+        tests:
+          - relationships: {to: ref('dim_product'), field: product_id}
+      - name: valid_from
+        tests: [not_null]
+      - name: initial_rate_pct
+        description: Fixed rate for the initial period (null for trackers).
+      - name: tracker_margin_pct
+        description: Margin over Bank Rate for trackers (null for fixes).
+      - name: rate_change_pct_points
+        description: Change from the previous version of the same product, in percentage points.
+
+  - name: dim_funding_partner
+    description: "Funding partners and their current lines. History of line changes is in `snap_funding_partners`. Owner: Treasury."
+    meta: {owner: treasury}
+    columns:
+      - name: partner_id
+        tests: [unique, not_null]
+      - name: monthly_capacity_gbp
+        description: The monthly funding line in pounds.
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, inclusive: false}
+
+  - name: fct_applications
+    description: >
+      One row per genuine mortgage application (broker resubmissions removed). Stage timestamps come from the
+      status history; `completed_at` is the date funds were released. Timings in days are decimals.
+      Grain: application. Owner: Operations analytics.
+    meta:
+      owner: operations_analytics
+      lightdash: {joins: [{join: dim_broker, sql_on: "${fct_applications.broker_id} = ${dim_broker.broker_id}"},
+                          {join: dim_product, sql_on: "${fct_applications.product_id} = ${dim_product.product_id}"}]}
+    tests:
+      - dbt_utils.expression_is_true:
+          expression: "not (is_completed and offered_at is null)"
+          config: {severity: error}
+    columns:
+      - name: application_id
+        description: Application identifier (primary key).
+        tests: [unique, not_null]
+        meta:
+          metrics:
+            applications: {type: count_distinct, label: Applications}
+            offers_issued: {type: count_distinct, label: Offers issued, filters: [{reached_offer: "true"}]}
+            completed_applications: {type: count_distinct, label: Completed applications, filters: [{is_completed: "true"}]}
+            withdrawn_applications: {type: count_distinct, label: Withdrawn applications, filters: [{is_withdrawn: "true"}]}
+      - name: broker_id
+        description: The submitting broker. May be unknown for a few applications whose broker id is not in the broker file (see dq_issues).
+        tests: [not_null]
+      - name: product_id
+        tests:
+          - relationships: {to: ref('dim_product'), field: product_id}
+      - name: submitted_at
+        description: When the broker submitted the full application.
+        tests: [not_null]
+      - name: submitted_month
+        description: First day of the month of submission.
+      - name: purpose
+        description: purchase, remortgage or product_transfer.
+        tests:
+          - accepted_values: {values: [purchase, remortgage, product_transfer]}
+      - name: property_type
+        tests:
+          - accepted_values: {values: [standard, hmo_small, mufb_small]}
+      - name: borrower_type
+        tests:
+          - accepted_values: {values: [individual, limited_company]}
+      - name: is_portfolio_landlord
+        description: Four or more mortgaged buy-to-let properties.
+      - name: loan_amount
+        description: Loan applied for, in pounds.
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, inclusive: false}
+      - name: ltv_at_application_pct
+        description: Loan applied for as a percentage of the declared property value.
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, max_value: 100}
+      - name: ltv_band_at_application
+        tests: [not_null]
+      - name: declared_monthly_rent
+        description: Rent declared by the broker. Policy uses the valuer's assessed gross rent (`monthly_rent_assessed`).
+      - name: monthly_rent_assessed
+        description: Gross monthly rent assessed by the valuer or AVM.
+      - name: valuation_type
+        description: physical or avm.
+      - name: outcome
+        description: "Current state: completed, declined, withdrawn, or the stage reached."
+        tests:
+          - accepted_values:
+              values: [completed, declined, withdrawn, offer accepted, offered, underwriting, valuation received, valuation instructed, submitted]
+      - name: is_completed
+        description: Funds were released.
+      - name: reached_offer
+        description: A mortgage offer was issued.
+      - name: valuation_received_at
+        tests:
+          - is_not_before: {compare_column: valuation_instructed_at}
+      - name: offered_at
+        tests:
+          - is_not_before: {compare_column: submitted_at}
+      - name: completed_at
+        description: Date funds were released, from the status history.
+        tests:
+          - is_not_before: {compare_column: offer_accepted_at}
+      - name: valuation_days
+        description: Days from valuation instruction to report; null where the history is out of order.
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0}
+      - name: days_to_offer
+        description: Days from submission to offer (the speed measure used for the feature evaluation).
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0}
+        meta:
+          metrics:
+            mean_days_to_offer: {type: average, label: Mean days to offer, round: 1}
+            median_days_to_offer: {type: median, label: Median days to offer, round: 1}
+      - name: rental_cover_policy_pct
+        description: Rental cover recomputed from policy (gross assessed rent, stress rate, product term).
+      - name: rental_cover_passes
+        description: Whether the policy rental cover meets the minimum for the borrower's tax band.
+      - name: feature_eligible
+        description: Eligible for the instant AVM remortgage option (remortgage, standard or small HMO, LTV up to 75%, up to 15 mortgages).
+      - name: is_post_launch
+        description: Submitted on or after the feature launch date.
+      - name: avm_used
+        description: An automated valuation was used.
+
+  - name: fct_offers
+    description: >
+      One row per offer with the pricing applied, the pricing that should have applied (the rate card live when
+      the case was submitted), and rental cover recomputed from policy. Grain: offer. Owner: Pricing.
+    meta: {owner: pricing}
+    columns:
+      - name: offer_id
+        tests: [unique, not_null]
+      - name: application_id
+        tests:
+          - unique
+          - relationships: {to: ref('fct_applications'), field: application_id}
+      - name: loan_amount
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, inclusive: false}
+      - name: ltv_pct
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, max_value: 80, inclusive: true}
+      - name: rate_card_id
+        tests:
+          - relationships: {to: ref('dim_rate_card'), field: rate_card_id}
+      - name: priced_on_expected_card
+        description: True when the offer used the rate card live at submission. False cases are listed in dq_issues as stale_rate_card.
+      - name: rental_cover_policy_pct
+        description: "Policy rental cover. Offers below the minimum for the tax band are reported (warn) and listed in dq_issues as rental_cover_below_policy."
+        tests:
+          - at_least_column:
+              threshold_column: min_rental_cover_pct
+              config: {severity: warn}
+      - name: rental_cover_passes
+        tests:
+          - accepted_values:
+              values: [true]
+              config: {severity: warn}
+
+  - name: fct_completions
+    description: "One row per completed loan: gross lending, product, broker and funding partner. Grain: completion. Owner: Finance."
+    meta: {owner: finance}
+    columns:
+      - name: completion_id
+        tests: [unique, not_null]
+        meta:
+          metrics:
+            completions: {type: count_distinct, label: Completions, description: Completed loans (funds released)}
+      - name: application_id
+        tests:
+          - unique
+          - relationships: {to: ref('fct_applications'), field: application_id}
+      - name: partner_id
+        description: Funding partner the loan was allocated to.
+        tests:
+          - not_null
+          - relationships: {to: ref('dim_funding_partner'), field: partner_id}
+      - name: completion_month
+        description: First day of the month funds were released (gross lending is reported by this month).
+        tests: [not_null]
+      - name: loan_amount
+        description: Gross lending, in pounds.
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, inclusive: false}
+        meta:
+          metrics:
+            gross_lending: {type: sum, label: Gross lending, format: gbp, round: 0, description: Sum of completed loans by month funds were released}
+            average_loan: {type: average, label: Average loan, format: gbp, round: 0}
+      - name: ltv_at_completion_pct
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0, max_value: 80, inclusive: true}
+
+  - name: fct_funding_monthly
+    description: "Allocated lending by funding partner and month against the partner's line. Grain: partner x month. Owner: Treasury."
+    meta: {owner: treasury}
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [partner_id, allocation_month]
+    columns:
+      - name: allocated_gbp
+        description: Lending allocated to the partner in the month.
+        meta:
+          metrics:
+            allocated_lending: {type: sum, label: Allocated lending, format: gbp, round: 0}
+      - name: monthly_capacity_gbp
+        description: The partner's monthly line.
+        meta:
+          metrics:
+            funding_line: {type: sum, label: Funding line, format: gbp, round: 0}
+      - name: utilisation_pct
+        description: Allocated lending as a percentage of the monthly line.
+      - name: is_over_line
+        description: Allocated more than the line. Expected to be false; months where it is true are in dq_issues.
+
+  - name: fct_loan_book_monthly
+    description: "Month-end snapshot of every loan with LTV and arrears bands. Grain: loan x month. Owner: Credit risk."
+    meta: {owner: credit_risk}
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [snapshot_month, loan_id]
+    columns:
+      - name: loan_status
+        tests:
+          - accepted_values: {values: [live, redeemed]}
+      - name: balance
+        tests:
+          - dbt_utils.accepted_range: {min_value: 0}
+        meta:
+          metrics:
+            book_balance: {type: sum, label: Book balance, format: gbp, round: 0, filters: [{loan_status: live}]}
+      - name: ltv_current_pct
+        description: Balance over the indexed property value.
+      - name: arrears_bucket
+        description: Up to date, 1 month, 2 months, 3 months or more.
+      - name: rental_cover_current_pct
+        description: Current rent over the interest due at the current pay rate.
+
+  - name: fct_product_transfers
+    description: "Outcome at the end of each fixed-rate period. Retention is the share transferred to a new product. Grain: maturity. Owner: Retention."
+    meta: {owner: retention}
+    columns:
+      - name: product_transfer_id
+        tests: [unique, not_null]
+        meta:
+          metrics:
+            maturities: {type: count_distinct, label: Maturities}
+            retained: {type: count_distinct, label: Retained by product transfer, filters: [{is_retained: "true"}]}
+      - name: outcome
+        tests:
+          - accepted_values: {values: [product_transfer, redeemed, reverted]}
+
+  - name: fct_feature_impact
+    description: >
+      Remortgage applications used to evaluate the instant AVM launch: eligible and ineligible groups, before and
+      after launch, excluding the censoring window at the end of the data. Grain: application.
+    meta: {owner: product_analytics}
+    columns:
+      - name: application_id
+        tests: [unique, not_null]
+      - name: analysis_group
+        tests:
+          - accepted_values: {values: [eligible, ineligible]}
+      - name: period
+        tests:
+          - accepted_values: {values: [pre-launch, post-launch]}
+
+  - name: agg_feature_impact
+    description: >
+      Difference-in-differences point estimates for the feature launch: the change in days to offer and withdrawal
+      rate for eligible cases, less the change for ineligible cases. See docs/FEATURE_IMPACT.md for confidence intervals.
+    meta: {owner: product_analytics}
+    columns:
+      - name: analysis_group
+        tests:
+          - accepted_values: {values: [eligible, ineligible, difference-in-differences]}

@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  duckdb:
+    name: Pipeline and tests on DuckDB (quarter-size data)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run the whole pipeline at quarter scale
+        run: python run.py --scale 0.25
+      - name: Check the scorecard caught every planted defect
+        run: |
+          python - <<'EOF'
+          import json
+          s = json.load(open("outputs/scorecard.json"))
+          print(s["caught"], "of", s["planted"], "planted issues caught;", s["false_alarms"], "false alarms")
+          assert s["caught"] == s["planted"] and s["false_alarms"] == 0
+          EOF
+      - name: Unit tests for the simulator and the end-to-end pipeline test
+        run: python -m pytest -q
+
+  postgres:
+    name: dbt build on PostgreSQL (same project, second warehouse)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: btl
+          POSTGRES_PASSWORD: btl
+          POSTGRES_DB: btl_lens
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U btl" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: btl
+      PGPASSWORD: btl
+      PGDATABASE: btl_lens
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Simulate, load into PostgreSQL and build
+        run: python run.py --scale 0.25 --target postgres

@@ -1,0 +1,5 @@
+arrears_months_from,arrears_months_to,arrears_bucket,sort_order
+0,0,Up to date,1
+1,1,1 month,2
+2,2,2 months,3
+3,99,3 months or more,4

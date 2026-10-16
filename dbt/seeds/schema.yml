@@ -1,0 +1,11 @@
+version: 2
+seeds:
+  - name: policy_rental_cover
+    description: Minimum rental cover (interest coverage ratio) by borrower tax band. Illustrative policy.
+    columns:
+      - name: tax_band
+        tests: [unique, not_null]
+  - name: ltv_bands
+    description: Loan-to-value bands used in reporting.
+  - name: arrears_buckets
+    description: Arrears buckets used in reporting.

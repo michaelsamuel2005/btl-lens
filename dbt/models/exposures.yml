@@ -1,0 +1,45 @@
+version: 2
+
+exposures:
+  - name: lending_dashboard
+    label: Lending and pipeline dashboard
+    type: dashboard
+    maturity: medium
+    description: Gross lending by month, product, broker network and funding partner; pipeline conversion and days to offer.
+    depends_on:
+      - ref('fct_applications')
+      - ref('fct_completions')
+      - ref('dim_broker')
+      - ref('dim_product')
+      - ref('dim_funding_partner')
+    owner: {name: Michael Samuel, email: michaelsamuel2005@outlook.com}
+
+  - name: funding_partner_report
+    label: Funding partner report
+    type: dashboard
+    maturity: medium
+    description: Each partner sees its own allocated lending, utilisation of its line and its loan book (row-level access by partner).
+    depends_on:
+      - ref('fct_funding_monthly')
+      - ref('fct_loan_book_monthly')
+    owner: {name: Michael Samuel, email: michaelsamuel2005@outlook.com}
+
+  - name: feature_impact_note
+    label: Instant AVM remortgage, post-launch evaluation
+    type: analysis
+    maturity: high
+    description: Difference-in-differences evaluation of the feature launch, with confidence intervals.
+    depends_on:
+      - ref('fct_feature_impact')
+      - ref('agg_feature_impact')
+    owner: {name: Michael Samuel, email: michaelsamuel2005@outlook.com}
+
+  - name: data_quality_register
+    label: Data quality register
+    type: dashboard
+    maturity: medium
+    description: Issues detected in the source extracts, by type and over time.
+    depends_on:
+      - ref('dq_issues')
+      - ref('dq_summary')
+    owner: {name: Michael Samuel, email: michaelsamuel2005@outlook.com}

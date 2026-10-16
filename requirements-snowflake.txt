@@ -1,0 +1,3 @@
+# Extra packages for the Snowflake target (docs/SNOWFLAKE.md). Not exercised in CI: it needs a Snowflake account.
+dbt-snowflake>=1.10,<1.12
+snowflake-connector-python[pandas]>=3.12

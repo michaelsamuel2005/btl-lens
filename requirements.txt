@@ -1,0 +1,17 @@
+# Core: simulator, dbt on DuckDB and PostgreSQL, analysis, tests
+dbt-core>=1.10,<1.11
+dbt-duckdb>=1.10,<1.12
+dbt-postgres>=1.10,<1.12
+duckdb>=1.1
+psycopg2-binary>=2.9
+pandas>=2.2
+numpy>=1.26
+statsmodels>=0.14
+matplotlib>=3.8
+PyYAML>=6.0
+pytest>=8.0
+
+# Orchestration (optional): `dagster dev -m orchestration.definitions`
+dagster>=1.9
+dagster-dbt>=0.25
+dagster-webserver>=1.9

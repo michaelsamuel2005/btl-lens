@@ -1,0 +1,30 @@
+# Three targets for the same project. Run from the repository root:
+#   dbt build --project-dir dbt --profiles-dir dbt                      (DuckDB, the default)
+#   dbt build --project-dir dbt --profiles-dir dbt --target snowflake   (a Snowflake trial; see docs/SNOWFLAKE.md)
+#   dbt build --project-dir dbt --profiles-dir dbt --target postgres    (PostgreSQL, for Lightdash; see docs/LIGHTDASH.md)
+btl_lens:
+  target: duckdb
+  outputs:
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('BTL_LENS_DB', 'outputs/btl_lens.duckdb') }}"   # relative to where dbt is run (the repo root)
+      threads: 4
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ACCOUNTADMIN') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'BTL_LENS') }}"
+      schema: public
+      threads: 4
+    postgres:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('PGPORT', '5432') | int }}"
+      user: "{{ env_var('PGUSER', 'btl') }}"
+      password: "{{ env_var('PGPASSWORD', 'btl') }}"
+      dbname: "{{ env_var('PGDATABASE', 'btl_lens') }}"
+      schema: public
+      threads: 4

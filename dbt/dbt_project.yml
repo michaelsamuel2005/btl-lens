@@ -1,0 +1,52 @@
+name: btl_lens
+version: "1.0.0"
+config-version: 2
+profile: btl_lens
+require-dbt-version: ">=1.8.0"
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  feature_launch_date: "2026-04-06"
+  feature_max_ltv_pct: 75
+  feature_max_portfolio_size: 15
+  analysis_censoring_days: 60         # applications submitted within 60 days of the latest data are excluded from timing analysis
+  rent_basis_tolerance: 0.08          # declared rent more than 8% below the valuer's gross rent is flagged
+
+models:
+  btl_lens:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    quality:
+      +materialized: table
+      +schema: quality
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  btl_lens:
+    +schema: seeds
+
+snapshots:
+  btl_lens:
+    +target_schema: snapshots
+
+tests:
+  btl_lens:
+    +store_failures: true
+    +schema: dq_failures

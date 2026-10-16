@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: stg_applications
+    description: Applications as exported, typed, with broker resubmissions flagged (`is_resubmission`). The `completed_at` export is kept as `completed_at_as_exported` and not used for timing.
+    columns:
+      - name: application_id
+        tests: [unique, not_null]
+      - name: is_resubmission
+        tests: [not_null]
+  - name: stg_portal_events
+    description: Portal events with the JSON payload fields extracted (session, device, the instant_avm feature flag).
+    columns:
+      - name: event_id
+        tests: [unique, not_null]
+      - name: event_type
+        tests:
+          - accepted_values: {values: [dip_started, dip_completed, application_submitted, avm_option_shown, avm_option_selected]}
+  - name: stg_offers
+    columns:
+      - name: offer_id
+        tests: [unique, not_null]
+  - name: stg_completions
+    columns:
+      - name: completion_id
+        tests: [unique, not_null]
+  - name: stg_loan_book_monthly
+    description: Month-end loan book as exported.
